@@ -162,11 +162,7 @@ fn encrypt_data(data: &[u8]) -> Result<Vec<u8>, String> {
     let mut hasher = Sha512Trunc256::new();
     hasher.input(password);
 
-    let password = hasher.result();
-
-    let mut key = vec![0u8; 32 - password.len()];
-    key.append(&mut password.to_vec());
-    encrypt(key.as_slice(), data)
+    encrypt(hasher.result().as_slice(), data)
 }
 
 fn encrypt(key: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
