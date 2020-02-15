@@ -167,14 +167,17 @@ fn encrypt_data(data: &[u8]) -> Result<Vec<u8>, String> {
 
 fn encrypt(key: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
     let b = base64::encode(data);
-    let mut cipher_text = b.as_bytes().to_vec();
+    let mut buffer = b.as_bytes().to_vec();
 
     let iv = rand::thread_rng().gen::<[u8; 16]>();
 
     let mut cipher = map_err!(AesCfb::new_var(key, &iv))?;
-    cipher.encrypt(&mut cipher_text);
+    cipher.encrypt(&mut buffer);
 
-    Ok(cipher_text.to_vec())
+    let mut cipher_text = iv.to_vec();
+    cipher_text.append(&mut buffer);
+
+    Ok(cipher_text)
 }
 
 fn bytes_to_u32(bytes: [u8; 4]) -> u32 {
