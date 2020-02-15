@@ -1,6 +1,5 @@
-use std::env::args;
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 
 use aes::Aes256;
 use cfb_mode::stream_cipher::{NewStreamCipher, StreamCipher};
@@ -11,7 +10,7 @@ use sha2::{Digest, Sha512Trunc256};
 type AesCfb = Cfb<Aes256>;
 
 #[macro_use]
-mod macros {
+pub mod macros {
     macro_rules! map_err {
         ($expr:expr) => {
             ($expr).map_err(|err| format!("line {}: {}", line!(), err.to_string()));
@@ -20,16 +19,17 @@ mod macros {
 }
 
 const PNG_HEADER: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+pub const CHUNK_NAME: &str = "crPt";
 
-struct Chunk {
+pub struct Chunk {
     length: u32,
-    c_type: String,
-    data: Vec<u8>,
+    pub c_type: String,
+    pub data: Vec<u8>,
     crc: u32,
 }
 
 impl Chunk {
-    fn raw<'a>(&self) -> Vec<u8> {
+    pub fn raw<'a>(&self) -> Vec<u8> {
         let raw_length = u32_to_bytes(self.length);
         let raw_c_type = self.c_type.as_bytes();
         let raw_crc = u32_to_bytes(self.crc);
@@ -40,67 +40,11 @@ impl Chunk {
         data.append(&mut self.data.clone());
         data.append(&mut raw_crc.to_vec());
 
-        println!("{:02x?}\n", data);
         data
     }
 }
 
-fn main() -> Result<(), String> {
-    let filename = match args().nth(1) {
-        Some(filename) => filename,
-        None => {
-            return Err("A file name is required!".to_string());
-        }
-    };
-
-    let mut file = map_err!(File::open(filename.clone()))?;
-
-    let header = validate_png(&mut file)?;
-
-    let mut output = map_err!(File::create(format!("encrypted-{}", filename)))?;
-
-    map_err!(output.write(&header))?;
-
-    let mut chunk = read_chunk(&mut file)?;
-
-    while &chunk.c_type != "IDAT" {
-        println!(
-            "len: {}, c_type: {}, crc: {}",
-            chunk.length, chunk.c_type, chunk.crc
-        );
-        //        dbg!(&chunk.data);
-        map_err!(output.write(&chunk.raw()))?;
-        chunk = read_chunk(&mut file)?;
-    }
-
-    println!("Data to encrypt: ");
-    let mut input = String::new();
-    let _ = map_err!(std::io::stdin().read_line(&mut input))?;
-
-    let input_data = encrypt_data(input.as_bytes())?;
-
-    println!("Writing data to file...");
-    let crypt_chunk = create_chunk(input_data.as_slice(), "crPt");
-    map_err!(output.write(&crypt_chunk.raw()))?;
-
-    loop {
-        println!(
-            "len: {}, c_type: {}, crc: {}",
-            chunk.length, chunk.c_type, chunk.crc
-        );
-        map_err!(output.write(&chunk.raw()))?;
-        chunk = match read_chunk(&mut file) {
-            Ok(chunk) => chunk,
-            Err(_) => break,
-        }
-    }
-
-    println!("Finished writing data to file.");
-
-    Ok(())
-}
-
-fn validate_png(file: &mut File) -> Result<[u8; 8], String> {
+pub fn validate_png(file: &mut File) -> Result<[u8; 8], String> {
     let mut header = [0u8; 8];
     map_err!(file.read_exact(&mut header))?;
 
@@ -111,7 +55,7 @@ fn validate_png(file: &mut File) -> Result<[u8; 8], String> {
     Err("Invalid file format".to_string())
 }
 
-fn read_chunk(file: &mut File) -> Result<Chunk, String> {
+pub fn read_chunk(file: &mut File) -> Result<Chunk, String> {
     let mut length_raw = [0u8; 4];
     map_err!(file.read_exact(&mut length_raw))?;
 
@@ -119,7 +63,7 @@ fn read_chunk(file: &mut File) -> Result<Chunk, String> {
 
     let mut c_type_raw = [0u8; 4];
     map_err!(file.read_exact(&mut c_type_raw))?;
-    let c_type = unsafe { String::from_utf8_unchecked(c_type_raw.to_vec()) };
+    let c_type = map_err!(String::from_utf8(c_type_raw.to_vec()))?;
 
     let mut data = vec![0u8; length as usize];
     map_err!(file.read_exact(data.as_mut_slice()))?;
@@ -136,7 +80,7 @@ fn read_chunk(file: &mut File) -> Result<Chunk, String> {
     })
 }
 
-fn create_chunk(data: &[u8], c_type: &str) -> Chunk {
+pub fn create_chunk(data: &[u8], c_type: &str) -> Chunk {
     let length = data.len() as u32;
     let raw_c_type = c_type.as_bytes();
 
@@ -154,22 +98,37 @@ fn create_chunk(data: &[u8], c_type: &str) -> Chunk {
     }
 }
 
-fn encrypt_data(data: &[u8]) -> Result<Vec<u8>, String> {
+fn read_password() -> Result<Vec<u8>, String> {
     println!("Password: ");
     let mut password = String::new();
     let _ = map_err!(io::stdin().read_line(&mut password))?;
 
     let mut hasher = Sha512Trunc256::new();
-    hasher.input(password);
+    hasher.input(password.trim());
 
-    encrypt(hasher.result().as_slice(), data)
+    Ok(hasher.result().to_vec())
 }
 
-fn encrypt(key: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
+pub fn encrypt_data(data: &[u8]) -> Result<Vec<u8>, String> {
+    let hashed_password = read_password()?;
+
+    encrypt(hashed_password.as_slice(), data)
+}
+
+pub fn decrypt_data(data: &[u8]) -> Result<Vec<u8>, String> {
+    let hashed_password = read_password()?;
+
+    decrypt(hashed_password.as_slice(), data)
+}
+
+pub fn encrypt(key: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
+    println!("Hash: {:?}", key);
     let b = base64::encode(data);
     let mut buffer = b.as_bytes().to_vec();
 
     let iv = rand::thread_rng().gen::<[u8; 16]>();
+
+    println!("IV: {:?}", iv);
 
     let mut cipher = map_err!(AesCfb::new_var(key, &iv))?;
     cipher.encrypt(&mut buffer);
@@ -178,6 +137,17 @@ fn encrypt(key: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
     cipher_text.append(&mut buffer);
 
     Ok(cipher_text)
+}
+
+pub fn decrypt(key: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
+    let iv = &data[..16];
+    let mut buffer = data[16..].to_vec();
+    let mut cipher = map_err!(AesCfb::new_var(key, &iv))?;
+    cipher.decrypt(&mut buffer);
+
+    let value = map_err!(base64::decode(&buffer))?;
+
+    Ok(value)
 }
 
 fn bytes_to_u32(bytes: [u8; 4]) -> u32 {
