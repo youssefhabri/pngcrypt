@@ -11,6 +11,7 @@ type AesCfb = Cfb<Aes256>;
 
 #[macro_use]
 pub mod macros {
+    #[macro_export]
     macro_rules! map_err {
         ($expr:expr) => {
             ($expr).map_err(|err| format!("line {}: {}", line!(), err.to_string()));
